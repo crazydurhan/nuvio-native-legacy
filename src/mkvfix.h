@@ -122,6 +122,9 @@ void mkvfix_sondar_relay(const char *url, const char *cabecalhos, const char *or
 int  mkvfix_relay(void);
 // Selected-file refresh identity is copied before the probe thread starts.
 void mkvfix_sondar_arquivo(const char *url, const char *cabecalhos, int usenet, int item, int file);
+// O mesmo arquivo do TorBox, marcado como repasse puro (o link novo do TorBox
+// continua vindo pela identidade do arquivo quando o do CDN vence).
+void mkvfix_sondar_arquivo_relay(const char *url, const char *cabecalhos, int usenet, int item, int file);
 int  mkvfix_estado(void);
 // Legendas de texto que a sessao atual esconde da TV (0 = nenhuma ou sondando).
 // > 0: o arquivo deve tocar pelo servidor (mkvfix_url) desde a abertura.

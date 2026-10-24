@@ -21,7 +21,7 @@ on:
     inputs:
       pacotes:
         description: "Packages to build (space separated)"
-        default: "NuvioTpk60 NuvioTpk65 NuvioTpk"
+        default: "NuvioTpk40"
 
 concurrency:
   group: build-tpk-${{ github.ref }}
@@ -35,7 +35,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      NV_TPK_PACOTES: ${{ github.event.inputs.pacotes || 'NuvioTpk60 NuvioTpk65 NuvioTpk' }}
+      NV_TPK_PACOTES: ${{ github.event.inputs.pacotes || 'NuvioTpk40' }}
+      # Fork build for Tizen 4/5 only: NuvioTpk40 never links the DTS FFmpeg.
+      NV_TPK_SEM_DTS: "1"
       # No P2P engine on CI (it lives on the owner's disk, not in the repo).
       NUVIO_P2P_MOTOR: none
       DOTNET_ROOT: ${{ github.workspace }}/.dotnet
@@ -88,6 +90,20 @@ jobs:
       # is not accepted by the emulation, plain linux/arm is.
       - name: Use linux/arm instead of linux/arm/v5
         run: sed -i 's#linux/arm/v5#linux/arm#g' tools/tpk.sh
+
+      # Account login config (tools/env.sh reads local.properties); kept in a
+      # repository secret, never committed.
+      - name: Write local.properties from the secrets
+        env:
+          NUVIO_SUPABASE_URL: ${{ secrets.NUVIO_SUPABASE_URL }}
+          NUVIO_SUPABASE_ANON_KEY: ${{ secrets.NUVIO_SUPABASE_ANON_KEY }}
+          TV_LOGIN_WEB_BASE_URL: ${{ secrets.TV_LOGIN_WEB_BASE_URL }}
+        run: |
+          for k in NUVIO_SUPABASE_URL NUVIO_SUPABASE_ANON_KEY TV_LOGIN_WEB_BASE_URL; do
+            [ -n "${!k}" ] || { echo "secret $k is empty"; exit 1; }
+            printf '%s=%s\n' "$k" "${!k}"
+          done > local.properties
+          echo "local.properties: $(wc -l < local.properties) keys"
 
       - name: Build the TPK
         run: |

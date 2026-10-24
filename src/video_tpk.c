@@ -402,6 +402,7 @@ static struct {
   // quando o cabecalho ja mostrou ASS/SSA; senao, uma reabertura cedo.
   int esperando; Uint32 esperaDesde;
   int reabriuLeg;
+  int porTls;            // repasse pelo HTTPS que a TV 4/5 nao valida (tlsDaTvVelho)
 } mf;
 static char mfEspUrl[sizeof urlAtual], mfEspCab[sizeof cabecalhos];
 static int mfEsperarAntes(const char *url, const char *cab);
@@ -713,6 +714,21 @@ static int mkvTemAss(void) {
                                 !strcmp(mkvFx[i].codec, "S_ASS") || !strcmp(mkvFx[i].codec, "S_SSA"))) return 1;
   return 0;
 }
+// HTTPS QUE A TV 4/5 NAO VALIDA (Q70R, Tizen 5.0, 24/10/2026). O
+// Tizen.Multimedia.Player confere o certificado pela loja de raizes do
+// firmware de 2018-2020, sem ISRG Root X2 (09/2020) nem as raizes novas da
+// Let's Encrypt. O TorBox (store-*.tb-cdn.io: YE2 -> Root YE -> ISRG Root X2)
+// dava ConnectionFailed (0xfe6c0026) no Prepare depois de 30 s, em toda fonte,
+// enquanto o curl do app (CA proprio) lia o cabecalho do mesmo link. No 4/5,
+// todo https de filme/episodio toca pelo servidor local: a TV so ve
+// http://127.0.0.1 e o curl faz o TLS.
+static int tlsDaTvVelho(const char *url) {
+#ifdef NV_TPK40
+  return url && !strncmp(url, "https://", 8);
+#else
+  (void)url; return 0;
+#endif
+}
 static int mfEsperarAntes(const char *url, const char *cab) {
   if (!mfPode() || mf.ativo || mkvfix_e_url(url)) return 0;
   // #648: o Tizen.Multimedia.Player so entrega User-Agent e Cookie na rede
@@ -720,16 +736,22 @@ static int mfEsperarAntes(const char *url, const char *cab) {
   // outro cabecalho (Referer, Origin, Authorization — medido: CDN responde
   // 403/timeout sem ele) nunca abre direto: repassa pelo servidor local do
   // mkvfix, cujo curl manda os cabecalhos em todo Range.
-  int relay = cab && mkvfix_cab_fora_da_tv(cab);
+  int porCab = cab && mkvfix_cab_fora_da_tv(cab);
+  int relay = porCab || tlsDaTvVelho(url);
+  mf.porTls = relay && !porCab;
   if (!relay && (mkvEstado != 3 || !mkvTemAss())) return 0;
   mf.sondou = 1; mf.esperando = 1; mf.esperaDesde = SDL_GetTicks();
   snprintf(mfEspUrl, sizeof mfEspUrl, "%s", url ? url : "");
   snprintf(mfEspCab, sizeof mfEspCab, "%s", cab ? cab : "");
-  if (cdn.arquivo) mkvfix_sondar_arquivo(hostUrl, hostCab, cdn.usenet, cdn.item, cdn.file);
+  if (cdn.arquivo) {
+    if (relay) mkvfix_sondar_arquivo_relay(hostUrl, hostCab, cdn.usenet, cdn.item, cdn.file);
+    else mkvfix_sondar_arquivo(hostUrl, hostCab, cdn.usenet, cdn.item, cdn.file);
+  }
   else if (relay) mkvfix_sondar_relay(hostUrl, hostCab, strcmp(urlAtual, hostUrl) ? urlAtual : NULL);
   else mkvfix_sondar(hostUrl, hostCab, strcmp(urlAtual, hostUrl) ? urlAtual : NULL);
-  printf(relay ? "[mkvfix] a fonte exige cabecalho que o player da TV nao envia: abrindo pelo servidor local\n"
-              : "[mkvfix] the file has ASS/SSA subtitles: checking it before the TV opens it\n");
+  printf(mf.porTls ? "[mkvfix] https on Tizen 4/5 (the TV's root store is too old): opening through the local server\n"
+         : relay ? "[mkvfix] a fonte exige cabecalho que o player da TV nao envia: abrindo pelo servidor local\n"
+                 : "[mkvfix] the file has ASS/SSA subtitles: checking it before the TV opens it\n");
   fflush(stdout);
   // O player anterior nao segue tocando durante a sonda (como no cdnAbrir).
   if (hParar) hParar();
@@ -749,7 +771,8 @@ static void mfBombear(void) {
     if ((mkvfix_ocultas() > 0 || mkvfix_relay()) && mkvfix_url(u, sizeof u)) {
       mf.ativo = 1;
       printf("[mkvfix] the TV opens the file through the local server (%s), %u ms\n",
-             mkvfix_relay() ? "addon headers the TV cannot send" : "subtitle tracks hidden",
+             !mkvfix_relay() ? "subtitle tracks hidden" :
+             mf.porTls ? "https the TV cannot verify" : "addon headers the TV cannot send",
              (unsigned)(SDL_GetTicks() - mf.esperaDesde));
       fflush(stdout);
       abrirHost(u, "");
